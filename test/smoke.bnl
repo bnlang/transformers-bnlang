@@ -1,0 +1,12 @@
+import "transformers-bnlang" as bt;
+
+print("transformers-bnlang version:", bt.version);
+print("pipeline           :", bt.pipeline);
+print("AutoTokenizer.open :", bt.AutoTokenizer);
+
+print();
+print("To generate text, point a pipeline at a model dir:");
+print();
+print("  var gen = bt.pipeline(\"text-generation\", \"./models/<dir>\", {});");
+print("  print(gen.run(\"Hello\", { max_new_tokens: 32 })[\"generated_text\"]);");
+print("  gen.close();");

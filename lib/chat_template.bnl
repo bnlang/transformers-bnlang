@@ -1,0 +1,40 @@
+function chatml(messages, add_generation_prompt) {
+    var out = "";
+    for (var m of messages) {
+        out = out + "<|im_start|>" + m["role"] + "\n" + m["content"] + "<|im_end|>\n";
+    }
+    if (add_generation_prompt) {
+        out = out + "<|im_start|>assistant\n";
+    }
+    return out;
+}
+
+function llama2(messages, add_generation_prompt) {
+    var system = "";
+    var turns  = [];
+    for (var m of messages) {
+        if (m["role"] == "system") { system = m["content"]; }
+        else { turns.push(m); }
+    }
+    var out = "";
+    var first = true;
+    for (var t of turns) {
+        if (t["role"] == "user") {
+            var prefix = "<s>[INST] ";
+            if (first and system.byte_length > 0) {
+                prefix = prefix + "<<SYS>>\n" + system + "\n<</SYS>>\n\n";
+            }
+            out = out + prefix + t["content"] + " [/INST]";
+            first = false;
+        } else if (t["role"] == "assistant") {
+            out = out + " " + t["content"] + " </s>";
+        }
+    }
+    return out;
+}
+
+function apply(name, messages, add_generation_prompt) {
+    if (name == "chatml") { return chatml(messages, add_generation_prompt); }
+    if (name == "llama2") { return llama2(messages, add_generation_prompt); }
+    throw "chat_template.apply: unknown template '" + name + "'";
+}

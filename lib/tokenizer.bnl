@@ -1,0 +1,39 @@
+import "transformers-bnlang" as native;
+
+function from_file(tokenizer_path) {
+    var handle = native.tokenizer_open(tokenizer_path);
+
+    var self = { handle: handle };
+    self.encode = function (text) {
+        return native.tokenizer_encode(self.handle, text);
+    };
+    self.decode = function (ids) {
+        return native.tokenizer_decode(self.handle, ids);
+    };
+    self.special_id = function (name) {
+        return native.tokenizer_special_id(self.handle, name);
+    };
+    self.close = function () {
+        native.tokenizer_close(self.handle);
+        self.handle = -1;
+    };
+
+    // ---- Bangla method aliases ----
+    self.এনকোড_করুন  = self.encode;      // encode
+    self.ডিকোড_করুন  = self.decode;      // decode
+    self.বিশেষ_আইডি  = self.special_id;  // special_id
+    self.বন্ধ_করুন   = self.close;       // close
+
+    return self;
+}
+
+function from_pretrained(model_dir) {
+    return from_file(model_dir + "/tokenizer.json");
+}
+
+var AutoTokenizer = {
+    from_pretrained: from_pretrained,
+    from_file:       from_file,
+    মডেল_থেকে:       from_pretrained,
+    ফাইল_থেকে:       from_file
+};

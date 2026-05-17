@@ -1,0 +1,15 @@
+import "transformers-bnlang"     as native;
+import "./tokenizer.bnl"         as _tok;
+import "./pipeline.bnl"          as _pipe;
+import "./architectures.bnl"     as _arch;
+
+var version              = native.version;
+var AutoTokenizer        = _tok.AutoTokenizer;
+var pipeline             = _pipe.pipeline;
+var register_architecture = _arch.register;
+
+// ---- Bangla aliases ----
+var সংস্করণ              = version;                  // version
+var অটো_টোকেনাইজার      = AutoTokenizer;            // AutoTokenizer
+var পাইপলাইন             = pipeline;                 // pipeline
+var স্থাপত্য_নিবন্ধন    = register_architecture;    // register_architecture

@@ -1,0 +1,7 @@
+build/
+deps/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+CMakeUserPresets.json

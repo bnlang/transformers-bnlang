@@ -1,0 +1,46 @@
+var ARCH = {
+    "qwen2": {
+        "num_layers":       24,
+        "num_kv_heads":      2,
+        "head_dim":         64,
+        "kv_input_pat":     "past_key_values.{i}.{k}",
+        "kv_output_pat":    "present.{i}.{k}",
+        "has_position_ids":  true,
+        "has_cache_branch":  false,
+        "eos_token_ids":    [151643, 151645],
+        "chat_template":    "chatml"
+    },
+    "llama": {
+        "num_layers":       32,
+        "num_kv_heads":      8,
+        "head_dim":        128,
+        "kv_input_pat":    "past_key_values.{i}.{k}",
+        "kv_output_pat":   "present.{i}.{k}",
+        "has_position_ids":  true,
+        "has_cache_branch":  false,
+        "eos_token_ids":    [2],
+        "chat_template":    "llama2"
+    },
+    "mistral": {
+        "num_layers":       32,
+        "num_kv_heads":      8,
+        "head_dim":        128,
+        "kv_input_pat":    "past_key_values.{i}.{k}",
+        "kv_output_pat":   "present.{i}.{k}",
+        "has_position_ids":  true,
+        "has_cache_branch":  false,
+        "eos_token_ids":    [2],
+        "chat_template":    "llama2"
+    }
+};
+
+function for_model_type(model_type) {
+    if (ARCH.has(model_type)) { return ARCH[model_type]; }
+    print("transformers-bnlang: unknown model_type '" + model_type +
+          "', falling back to qwen2 descriptor (may need register_architecture)");
+    return ARCH["qwen2"];
+}
+
+function register(name, descriptor) {
+    ARCH[name] = descriptor;
+}

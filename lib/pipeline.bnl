@@ -1,0 +1,142 @@
+import "onnxruntime-bnlang"       as ort;
+import "onnxruntime-genai-bnlang" as ortg;
+import "io"                       as io;
+import "json"                     as json;
+import "path"                     as path;
+import "./tokenizer.bnl"          as _tok;
+import "./architectures.bnl"      as _arch;
+import "./chat_template.bnl"      as _tmpl;
+import "./generation.bnl"         as _gen;
+
+function _resolve(model_dir, override, default_subpath) {
+    if (override != null) {
+        if (path.is_absolute(override)) { return override; }
+        if (model_dir == null) {
+            throw "transformers-bnlang: relative override '" + override +
+                  "' requires model_dir, or use an absolute path";
+        }
+        return model_dir + "/" + override;
+    }
+    if (model_dir == null) {
+        throw "transformers-bnlang: must specify model_dir or all of {model, config, tokenizer} as absolute paths";
+    }
+    return model_dir + "/" + default_subpath;
+}
+
+function _read_config(config_path) {
+    var raw = io.read_file(config_path);
+    return json.parse(raw);
+}
+
+function _text_generation_genai(model_dir, pipeline_opts) {
+    if (pipeline_opts == null) { pipeline_opts = {}; }
+
+    if (not io.exists(model_dir + "/genai_config.json")) {
+        throw "transformers-bnlang: engine 'onnxruntime-genai' needs a model dir "
+            + "with genai_config.json. '" + model_dir + "' looks like a vanilla "
+            + "HF export. Either point at a GenAI-ready dir (e.g. one from "
+            + "xiaoyao9184/...-onnx-genai or microsoft/...-onnx) or drop the "
+            + "'engine' option to use the default ORT loop.";
+    }
+
+    var gen = ortg.Generator.open(model_dir);
+
+    var self = {};
+    self.run = function (text, opts) {
+        if (opts == null) { opts = {}; }
+        return gen.generate(text, opts);
+    };
+    self.chat = function (messages, opts) {
+        var prompt = "";
+        for (var m of messages) {
+            prompt = prompt + "<|im_start|>" + m["role"] + "\n" + m["content"] + "<|im_end|>\n";
+        }
+        prompt = prompt + "<|im_start|>assistant\n";
+        return self.run(prompt, opts);
+    };
+    self.close = function () {
+        gen.close();
+    };
+
+    // ---- Bangla method aliases ----
+    self.চালান       = self.run;      // run
+    self.আলাপ_করুন  = self.chat;     // chat — "have a conversation"
+    self.বন্ধ_করুন   = self.close;    // close
+
+    return self;
+}
+
+function text_generation(model_dir, pipeline_opts) {
+    if (pipeline_opts == null) { pipeline_opts = {}; }
+
+    // Engine switch — fast-path through onnxruntime-genai when requested.
+    if (pipeline_opts["engine"] == "onnxruntime-genai") {
+        return _text_generation_genai(model_dir, pipeline_opts);
+    }
+
+    // Resolve paths (override or default).
+    var config_path = _resolve(model_dir, pipeline_opts["config"],    "config.json");
+    var tok_path    = _resolve(model_dir, pipeline_opts["tokenizer"], "tokenizer.json");
+    var model_path  = _resolve(model_dir, pipeline_opts["model"],     "onnx/model.onnx");
+
+    // Architecture descriptor from config.model_type, or user override.
+    var arch = null;
+    if (pipeline_opts["architecture"] != null) {
+        arch = pipeline_opts["architecture"];
+    } else {
+        var config     = _read_config(config_path);
+        var model_type = config["model_type"];
+        if (model_type == null) { model_type = "qwen2"; }
+        arch = _arch.for_model_type(model_type);
+    }
+
+    var tok = _tok.AutoTokenizer.from_file(tok_path);
+
+    var sess_opts = { log_severity_level: 3 };
+    var skip = { "model": true, "config": true, "tokenizer": true,
+                 "architecture": true, "engine": true };
+    for (var k of pipeline_opts.keys()) {
+        if (not skip.has(k)) { sess_opts[k] = pipeline_opts[k]; }
+    }
+    var sess = ort.InferenceSession.open(model_path, sess_opts);
+
+    var self = { architecture: arch };
+
+    self.run = function (text, opts) {
+        if (opts == null) { opts = {}; }
+        var ids   = tok.encode(text);
+        var newer = _gen.generate(sess, ids, opts, arch);
+        var full  = [];
+        for (var x of ids)   { full.push(x); }
+        for (var y of newer) { full.push(y); }
+        return {
+            "generated_text": tok.decode(full),
+            "new_text":       tok.decode(newer),
+            "input_ids":      ids,
+            "generated_ids":  newer
+        };
+    };
+
+    self.chat = function (messages, opts) {
+        var prompt = _tmpl.apply(arch["chat_template"], messages, true);
+        return self.run(prompt, opts);
+    };
+
+    self.close = function () {
+        tok.close();
+        sess.close();
+    };
+
+    // ---- Bangla method aliases ----
+    self.চালান       = self.run;      // run
+    self.আলাপ_করুন  = self.chat;     // chat
+    self.বন্ধ_করুন   = self.close;    // close
+
+    return self;
+}
+
+function pipeline(task, model_dir, options) {
+    if (task == "text-generation") { return text_generation(model_dir, options); }
+    throw "transformers-bnlang: unsupported task '" + task +
+          "' (v0.1.0 supports: text-generation)";
+}

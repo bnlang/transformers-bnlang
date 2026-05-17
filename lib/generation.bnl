@@ -1,0 +1,165 @@
+import "transformers-bnlang" as native;
+import "onnxruntime-bnlang"  as ort;
+
+var VOCAB_SIZE = 151936;
+
+// ---------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------
+
+function _kv_name(pat, i, k) {
+    var out = pat;
+    var idx = out.index_of("{i}");
+    if (idx >= 0) { out = out.byte_slice(0, idx) + str(i) + out.byte_slice(idx + 3); }
+    var idx2 = out.index_of("{k}");
+    if (idx2 >= 0) { out = out.byte_slice(0, idx2) + k + out.byte_slice(idx2 + 3); }
+    return out;
+}
+
+function _ones_of_length(n) {
+    var out = [];
+    var i = 0;
+    while (i < n) { out.push(1); i = i + 1; }
+    return out;
+}
+
+function _range(n) {
+    var out = [];
+    var i = 0;
+    while (i < n) { out.push(i); i = i + 1; }
+    return out;
+}
+
+function _data_of(tensor) {
+    if (tensor.has("data")) { return tensor["data"]; }
+    return ort.tensor_to_data(tensor["handle"]);
+}
+
+// ---------------------------------------------------------------------
+// Feeds
+// ---------------------------------------------------------------------
+
+function _initial_feeds(prompt_ids, arch) {
+    var n = prompt_ids.length;
+    var feeds = {};
+    feeds["input_ids"]      = { dtype: "int64", shape: [1, n], data: prompt_ids };
+    feeds["attention_mask"] = { dtype: "int64", shape: [1, n], data: _ones_of_length(n) };
+    if (arch["has_position_ids"]) {
+        feeds["position_ids"] = { dtype: "int64", shape: [1, n], data: _range(n) };
+    }
+    var kv_shape = [1, arch["num_kv_heads"], 0, arch["head_dim"]];
+    var layer = 0;
+    while (layer < arch["num_layers"]) {
+        feeds[_kv_name(arch["kv_input_pat"], layer, "key")] =
+            { dtype: "float32", shape: kv_shape, data: [] };
+        feeds[_kv_name(arch["kv_input_pat"], layer, "value")] =
+            { dtype: "float32", shape: kv_shape, data: [] };
+        layer = layer + 1;
+    }
+    if (arch["has_cache_branch"]) {
+        feeds["use_cache_branch"] = { dtype: "bool", shape: [1], data: [false] };
+    }
+    return feeds;
+}
+
+function _step_feeds(token_id, past_len, past_kv, arch) {
+    var total = past_len + 1;
+    var feeds = {};
+    feeds["input_ids"]      = { dtype: "int64", shape: [1, 1],     data: [token_id] };
+    feeds["attention_mask"] = { dtype: "int64", shape: [1, total], data: _ones_of_length(total) };
+    if (arch["has_position_ids"]) {
+        feeds["position_ids"] = { dtype: "int64", shape: [1, 1], data: [past_len] };
+    }
+    var layer = 0;
+    while (layer < arch["num_layers"]) {
+        feeds[_kv_name(arch["kv_input_pat"], layer, "key")]   = past_kv[str(layer) + ":key"];
+        feeds[_kv_name(arch["kv_input_pat"], layer, "value")] = past_kv[str(layer) + ":value"];
+        layer = layer + 1;
+    }
+    if (arch["has_cache_branch"]) {
+        feeds["use_cache_branch"] = { dtype: "bool", shape: [1], data: [true] };
+    }
+    return feeds;
+}
+
+function _extract_present(out, arch) {
+    var kv = {};
+    var layer = 0;
+    while (layer < arch["num_layers"]) {
+        var k = _kv_name(arch["kv_output_pat"], layer, "key");
+        var v = _kv_name(arch["kv_output_pat"], layer, "value");
+        kv[str(layer) + ":key"]   = out[k];
+        kv[str(layer) + ":value"] = out[v];
+        layer = layer + 1;
+    }
+    return kv;
+}
+
+function _is_eos(id, arch) {
+    for (var e of arch["eos_token_ids"]) {
+        if (e == id) { return true; }
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------
+// Sampling
+// ---------------------------------------------------------------------
+function _pick_next(logits_tensor, opts) {
+    var logits = _data_of(logits_tensor);
+
+    var do_sample = opts["do_sample"];
+    if (do_sample == null) { do_sample = false; }
+    if (not do_sample) {
+        return native.argmax_last(logits, VOCAB_SIZE);
+    }
+    var temperature = opts["temperature"];
+    if (temperature == null) { temperature = 1.0; }
+    var top_k = opts["top_k"];
+    if (top_k == null) { top_k = 0; }
+    var top_p = opts["top_p"];
+    if (top_p == null) { top_p = 1.0; }
+    var seed = opts["seed"];
+    if (seed == null) { seed = 0; }
+    return native.sample_last(logits, VOCAB_SIZE, temperature, top_k, top_p, seed);
+}
+
+function _close_unused(out) {
+    var logits = out["logits"];
+    if (logits.has("handle")) { ort.tensor_close(logits["handle"]); }
+}
+
+// ---------------------------------------------------------------------
+// Generation loop
+// ---------------------------------------------------------------------
+
+function generate(sess, prompt_ids, opts, arch) {
+    var max_new = opts["max_new_tokens"];
+    if (max_new == null) { max_new = 32; }
+
+    var generated = [];
+    var n_prompt  = prompt_ids.length;
+
+    var feeds   = _initial_feeds(prompt_ids, arch);
+    var out     = sess.run(feeds);
+    var next_id = _pick_next(out["logits"], opts);
+    _close_unused(out);
+    var past_kv = _extract_present(out, arch);
+
+    if (_is_eos(next_id, arch)) { return generated; }
+    generated.push(next_id);
+
+    var step = 1;
+    while (step < max_new) {
+        var past_len = n_prompt + step - 1;
+        feeds   = _step_feeds(next_id, past_len, past_kv, arch);
+        out     = sess.run(feeds);
+        next_id = _pick_next(out["logits"], opts);
+        _close_unused(out);
+        past_kv = _extract_present(out, arch);
+        if (_is_eos(next_id, arch)) { break; }
+        generated.push(next_id);
+        step = step + 1;
+    }
+    return generated;
+}
