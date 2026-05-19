@@ -20,6 +20,7 @@ function TextStreamer(tokenizer, opts) {
     var prev_text  = "";
     var prompt_consumed = not skip_prompt;
     var first_chunk_emitted = false;
+    var prompt_text_len = 0;
 
     var self = {};
 
@@ -31,6 +32,7 @@ function TextStreamer(tokenizer, opts) {
                 ids.push(p);
             }
             prev_text = tokenizer.decode(ids);
+            prompt_text_len = prev_text.byte_length;
             prompt_consumed = true;
             return;
         }
@@ -67,7 +69,9 @@ function TextStreamer(tokenizer, opts) {
             prev_text = full;
             if (chunk.length > 0) { callback(chunk); }
         }
-        if (on_finalized != null) { on_finalized(prev_text); }
+        if (on_finalized != null) {
+            on_finalized(prev_text.byte_slice(prompt_text_len));
+        }
     };
 
     return self;

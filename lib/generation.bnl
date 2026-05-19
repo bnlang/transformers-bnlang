@@ -157,6 +157,15 @@ function _close_unused(sess, out) {
     }
 }
 
+function _close_past_kv(sess, past_kv) {
+    for (var k of past_kv.keys()) {
+        var t = past_kv[k];
+        if (t != null and t.has("handle")) {
+            sess._ops["tensor_close"](t["handle"]);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------
 // Generation loop
 // ---------------------------------------------------------------------
@@ -179,6 +188,7 @@ function generate(sess, prompt_ids, opts, arch) {
 
     if (_is_eos(next_id, arch)) {
         if (streamer != null) { streamer.end(); }
+        _close_past_kv(sess, past_kv);
         return generated;
     }
     generated.push(next_id);
@@ -198,5 +208,6 @@ function generate(sess, prompt_ids, opts, arch) {
         step = step + 1;
     }
     if (streamer != null) { streamer.end(); }
+    _close_past_kv(sess, past_kv);
     return generated;
 }

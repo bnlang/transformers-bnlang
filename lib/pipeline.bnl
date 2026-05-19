@@ -129,10 +129,19 @@ function _arch_from_config(arch, cfg) {
     return out;
 }
 
-function _torch_native_session(arch_name, weights, arch, rope_cache) {
+function _torch_native_session(arch_name, weights, arch, rope_cache, max_pos) {
     var num_layers = arch["num_layers"];
     var self = {};
     self.run = function (feeds) {
+        var pos_data = feeds["position_ids"]["data"];
+        var max_seen = 0;
+        for (var p of pos_data) { if (p > max_seen) { max_seen = p; } }
+        if (max_seen >= max_pos) {
+            throw "torch-native: context length exceeded — position " + str(max_seen) +
+                  " >= rope cache size " + str(max_pos) +
+                  ". Trim chat history or rebuild pipeline with a larger max_position.";
+        }
+
         var ids_tensor = tch.tensor_from(feeds["input_ids"]);
         var pos_tensor = tch.tensor_from(feeds["position_ids"]);
 
@@ -180,6 +189,18 @@ function _torch_native_session(arch_name, weights, arch, rope_cache) {
             result["present." + str(i) + ".value"] = out["past_kv"][i]["v"];
             i = i + 1;
         }
+
+        tch.tensor_close(ids_tensor["handle"]);
+        tch.tensor_close(pos_tensor["handle"]);
+        var j = 0;
+        while (j < num_layers) {
+            if (past_kv[j]["k"] != null) {
+                tch.tensor_close(past_kv[j]["k"]["handle"]);
+                tch.tensor_close(past_kv[j]["v"]["handle"]);
+            }
+            j = j + 1;
+        }
+
         return result;
     };
     self.close = function () {
@@ -195,12 +216,50 @@ function _torch_native_session(arch_name, weights, arch, rope_cache) {
     return self;
 }
 
+function _load_safetensors_sharded(model_dir, index_path) {
+    var index = json.parse(io.read_file(index_path));
+    var weight_map = index["weight_map"];
+
+    var shards_set = {};
+    for (var name of weight_map.keys()) {
+        shards_set[weight_map[name]] = true;
+    }
+
+    var merged = {};
+    for (var shard of shards_set.keys()) {
+        var shard_path = model_dir + "/" + shard;
+        var chunk = tch.load_safetensors(shard_path);
+        for (var k of chunk.keys()) {
+            merged[k] = chunk[k];
+        }
+    }
+    return merged;
+}
+
+function _load_torch_native_weights(model_dir, override) {
+    if (override != null) {
+        var p = _resolve(model_dir, override, "model.safetensors");
+        return tch.load_safetensors(p);
+    }
+    if (model_dir == null) {
+        throw "transformers-bnlang: torch-native needs model_dir or 'model' override";
+    }
+    var single = model_dir + "/model.safetensors";
+    if (io.exists(single)) {
+        return tch.load_safetensors(single);
+    }
+    var index_path = model_dir + "/model.safetensors.index.json";
+    if (io.exists(index_path)) {
+        return _load_safetensors_sharded(model_dir, index_path);
+    }
+    throw "transformers-bnlang: no model.safetensors or model.safetensors.index.json in '" + model_dir + "'";
+}
+
 function _text_generation_torch_native(model_dir, pipeline_opts) {
     if (pipeline_opts == null) { pipeline_opts = {}; }
 
     var config_path = _resolve(model_dir, pipeline_opts["config"],    "config.json");
     var tok_path    = _resolve(model_dir, pipeline_opts["tokenizer"], "tokenizer.json");
-    var model_path  = _resolve(model_dir, pipeline_opts["model"],     "model.safetensors");
 
     var config_json = _read_config(config_path);
 
@@ -218,15 +277,12 @@ function _text_generation_torch_native(model_dir, pipeline_opts) {
 
     var tok = _tok.AutoTokenizer.from_file(tok_path);
 
-    print("torch-native: loading " + model_path + " ...");
-    var raw_weights = tch.load_safetensors(model_path);
-    print("torch-native: " + str(raw_weights.keys().length) + " tensors loaded");
+    var raw_weights = _load_torch_native_weights(model_dir, pipeline_opts["model"]);
 
     var keep_dtype = pipeline_opts["keep_dtype"];
     if (keep_dtype == null) { keep_dtype = false; }
     var weights = raw_weights;
     if (not keep_dtype) {
-        print("torch-native: casting weights to fp32 for faster CPU matmul ...");
         weights = {};
         for (var k of raw_weights.keys()) {
             weights[k] = tch.to_dtype(raw_weights[k], "float32");
@@ -236,7 +292,7 @@ function _text_generation_torch_native(model_dir, pipeline_opts) {
 
     var max_pos = 32768;
     if (arch.has("max_position_embeddings")) { max_pos = arch["max_position_embeddings"]; }
-    if (max_pos > 8192) { max_pos = 8192; }
+    if (pipeline_opts["max_position"] != null) { max_pos = pipeline_opts["max_position"]; }
 
     var head_dim = arch["head_dim"];
     var rope_theta = 1000000.0;
@@ -244,7 +300,7 @@ function _text_generation_torch_native(model_dir, pipeline_opts) {
     var rope_cache = tch.build_rope_cache(
         tch.arange(0, max_pos, 1, "int64"), head_dim, rope_theta);
 
-    var sess = _torch_native_session(arch_name, weights, arch, rope_cache);
+    var sess = _torch_native_session(arch_name, weights, arch, rope_cache, max_pos);
 
     var self = { architecture: arch, tokenizer: tok, engine: "torch-native" };
 

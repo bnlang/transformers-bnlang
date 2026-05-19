@@ -41,7 +41,11 @@ function forward(w, input_ids, position_ids, past_kv, cfg) {
             full_cos, full_sin, position_ids,
             num_heads, num_kv_heads, head_dim,
             is_causal);
+        tch.tensor_close(n1["handle"]);
+
         var x1 = tch.add(h, attn["out"]);
+        tch.tensor_close(attn["out"]["handle"]);
+        tch.tensor_close(h["handle"]);
 
         var n2 = tch.rms_norm(x1, w[pfx + "post_attention_layernorm.weight"], eps);
         var m  = tch.swiglu_mlp(
@@ -49,22 +53,27 @@ function forward(w, input_ids, position_ids, past_kv, cfg) {
             w[pfx + "mlp.gate_proj.weight"],
             w[pfx + "mlp.up_proj.weight"],
             w[pfx + "mlp.down_proj.weight"]);
+        tch.tensor_close(n2["handle"]);
+
         h = tch.add(x1, m);
+        tch.tensor_close(x1["handle"]);
+        tch.tensor_close(m["handle"]);
 
         new_kv.push({ k: attn["k"], v: attn["v"] });
         i = i + 1;
     }
 
-    h = tch.rms_norm(h, w["model.norm.weight"], eps);
+    var h_norm = tch.rms_norm(h, w["model.norm.weight"], eps);
+    tch.tensor_close(h["handle"]);
 
     var lm_w = null;
     if (w.has("lm_head.weight")) {
         lm_w = w["lm_head.weight"];
     } else {
-        // Llama-3.2-1B ties; Llama-3-8B and bigger don't (lm_head ships separately).
         lm_w = w["model.embed_tokens.weight"];
     }
-    var logits = tch.linear(h, lm_w, null);
+    var logits = tch.linear(h_norm, lm_w, null);
+    tch.tensor_close(h_norm["handle"]);
 
     return { logits: logits, past_kv: new_kv };
 }
