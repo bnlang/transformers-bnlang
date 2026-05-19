@@ -3,14 +3,16 @@ import "./tokenizer.bnl"         as _tok;
 import "./pipeline.bnl"          as _pipe;
 import "./architectures.bnl"     as _arch;
 import "./streamer.bnl"          as _stream;
+import "./architectures/qwen2.bnl" as _qwen2;
+import "./architectures/llama.bnl" as _llama;
 
 var version              = native.version;
 var AutoTokenizer        = _tok.AutoTokenizer;
 var pipeline             = _pipe.pipeline;
 var register_architecture = _arch.register;
 var TextStreamer         = _stream.TextStreamer;
-// process.stdout.write equivalent — no newline, no buffering.
-var stdout_write         = native.stdout_write;
+var qwen2_forward        = _qwen2.forward;
+var llama_forward        = _llama.forward;
 
 // ---- Bangla aliases ----
 var সংস্করণ              = version;                  // version

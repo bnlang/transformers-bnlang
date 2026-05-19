@@ -1,10 +1,13 @@
 import "onnxruntime-bnlang"       as ort;
 import "onnxruntime-genai-bnlang" as ortg;
+import "torch-bnlang"              as tch;
 import "io"                       as io;
 import "json"                     as json;
 import "path"                     as path;
 import "./tokenizer.bnl"          as _tok;
 import "./architectures.bnl"      as _arch;
+import "./architectures/qwen2.bnl" as _qwen2;
+import "./architectures/llama.bnl" as _llama;
 import "./chat_template.bnl"      as _tmpl;
 import "./generation.bnl"         as _gen;
 
@@ -66,12 +69,292 @@ function _text_generation_genai(model_dir, pipeline_opts) {
     return self;
 }
 
+function _torch_session(pt_path, sess_opts) {
+    var mod = tch.JitModule.open(pt_path, sess_opts);
+    var self = {};
+    self.run = function (feeds) {
+        return mod.run(feeds);
+    };
+    self.close = function () { mod.close(); };
+    self._ops = {
+        "argmax_last":  tch.tensor_argmax_last,
+        "sample_last":  tch.tensor_sample_last,
+        "tensor_close": tch.tensor_close
+    };
+    return self;
+}
+
+function _arch_for_torch(arch) {
+    var copy = {};
+    for (var k of arch.keys()) { copy[k] = arch[k]; }
+    copy["kv_input_pat"]  = "past_key_values_{i}_{k}";
+    copy["kv_output_pat"] = "present_{i}_{k}";
+    return copy;
+}
+
+function _arch_from_config(arch, cfg) {
+    var out = {};
+    for (var k of arch.keys()) { out[k] = arch[k]; }
+
+    if (cfg.has("num_hidden_layers"))      { out["num_layers"]    = cfg["num_hidden_layers"]; }
+    if (cfg.has("num_attention_heads"))    { out["num_heads"]     = cfg["num_attention_heads"]; }
+    if (cfg.has("num_key_value_heads"))    { out["num_kv_heads"]  = cfg["num_key_value_heads"]; }
+    else if (cfg.has("num_attention_heads")) {
+        out["num_kv_heads"] = cfg["num_attention_heads"];   // MHA fallback
+    }
+    if (cfg.has("hidden_size"))            { out["hidden_size"]   = cfg["hidden_size"]; }
+    if (cfg.has("intermediate_size"))      { out["intermediate_size"] = cfg["intermediate_size"]; }
+    if (cfg.has("rms_norm_eps"))           { out["rms_norm_eps"]  = cfg["rms_norm_eps"]; }
+    if (cfg.has("rope_theta"))             { out["rope_theta"]    = cfg["rope_theta"]; }
+    if (cfg.has("vocab_size"))             { out["vocab_size"]    = cfg["vocab_size"]; }
+    if (cfg.has("max_position_embeddings")) { out["max_position_embeddings"] = cfg["max_position_embeddings"]; }
+    if (cfg.has("tie_word_embeddings"))    { out["tie_word_embeddings"] = cfg["tie_word_embeddings"]; }
+
+    // head_dim — sometimes explicit in config, sometimes derived.
+    if (cfg.has("head_dim")) {
+        out["head_dim"] = cfg["head_dim"];
+    } else if (out.has("hidden_size") and out.has("num_heads")) {
+        out["head_dim"] = out["hidden_size"] / out["num_heads"];
+    }
+
+    // EOS tokens — can be a single int or a list in config.
+    if (cfg.has("eos_token_id")) {
+        var eos = cfg["eos_token_id"];
+        if (type(eos) == "number") {
+            out["eos_token_ids"] = [eos];
+        } else {
+            out["eos_token_ids"] = eos;
+        }
+    }
+    return out;
+}
+
+function _torch_native_session(arch_name, weights, arch, rope_cache) {
+    var num_layers = arch["num_layers"];
+    var self = {};
+    self.run = function (feeds) {
+        var ids_tensor = tch.tensor_from(feeds["input_ids"]);
+        var pos_tensor = tch.tensor_from(feeds["position_ids"]);
+
+        var past_kv = [];
+        var i = 0;
+        while (i < num_layers) {
+            var kspec = feeds["past_key_values." + str(i) + ".key"];
+            var vspec = feeds["past_key_values." + str(i) + ".value"];
+            if (kspec["shape"][2] == 0) {
+                past_kv.push({ k: null, v: null });
+            } else {
+                past_kv.push({
+                    k: tch.tensor_from(kspec),
+                    v: tch.tensor_from(vspec)
+                });
+            }
+            i = i + 1;
+        }
+
+        var fwd_cfg = {
+            "num_layers":   arch["num_layers"],
+            "num_heads":    arch["num_heads"],
+            "num_kv_heads": arch["num_kv_heads"],
+            "head_dim":     arch["head_dim"],
+            "hidden_size":  arch["hidden_size"],
+            "rms_norm_eps": arch["rms_norm_eps"],
+            "rope_theta":   arch["rope_theta"],
+            "rope_cache":   rope_cache
+        };
+
+        var out = null;
+        if (arch_name == "qwen2") {
+            out = _qwen2.forward(weights, ids_tensor, pos_tensor, past_kv, fwd_cfg);
+        } else if (arch_name == "llama") {
+            out = _llama.forward(weights, ids_tensor, pos_tensor, past_kv, fwd_cfg);
+        } else {
+            throw "torch-native: unsupported architecture '" + arch_name +
+                "' (currently: qwen2, llama)";
+        }
+
+        var result = { logits: out["logits"] };
+        i = 0;
+        while (i < num_layers) {
+            result["present." + str(i) + ".key"]   = out["past_kv"][i]["k"];
+            result["present." + str(i) + ".value"] = out["past_kv"][i]["v"];
+            i = i + 1;
+        }
+        return result;
+    };
+    self.close = function () {
+        for (var k of weights.keys()) {
+            tch.tensor_close(weights[k]["handle"]);
+        }
+    };
+    self._ops = {
+        "argmax_last":  tch.tensor_argmax_last,
+        "sample_last":  tch.tensor_sample_last,
+        "tensor_close": tch.tensor_close
+    };
+    return self;
+}
+
+function _text_generation_torch_native(model_dir, pipeline_opts) {
+    if (pipeline_opts == null) { pipeline_opts = {}; }
+
+    var config_path = _resolve(model_dir, pipeline_opts["config"],    "config.json");
+    var tok_path    = _resolve(model_dir, pipeline_opts["tokenizer"], "tokenizer.json");
+    var model_path  = _resolve(model_dir, pipeline_opts["model"],     "model.safetensors");
+
+    var config_json = _read_config(config_path);
+
+    var arch = null;
+    var arch_name = "qwen2";
+    if (pipeline_opts["architecture"] != null) {
+        arch = pipeline_opts["architecture"];
+    } else {
+        arch_name = config_json["model_type"];
+        if (arch_name == null) { arch_name = "qwen2"; }
+        arch = _arch.for_model_type(arch_name);
+    }
+
+    arch = _arch_from_config(arch, config_json);
+
+    var tok = _tok.AutoTokenizer.from_file(tok_path);
+
+    print("torch-native: loading " + model_path + " ...");
+    var raw_weights = tch.load_safetensors(model_path);
+    print("torch-native: " + str(raw_weights.keys().length) + " tensors loaded");
+
+    var keep_dtype = pipeline_opts["keep_dtype"];
+    if (keep_dtype == null) { keep_dtype = false; }
+    var weights = raw_weights;
+    if (not keep_dtype) {
+        print("torch-native: casting weights to fp32 for faster CPU matmul ...");
+        weights = {};
+        for (var k of raw_weights.keys()) {
+            weights[k] = tch.to_dtype(raw_weights[k], "float32");
+            tch.tensor_close(raw_weights[k]["handle"]);
+        }
+    }
+
+    var max_pos = 32768;
+    if (arch.has("max_position_embeddings")) { max_pos = arch["max_position_embeddings"]; }
+    if (max_pos > 8192) { max_pos = 8192; }
+
+    var head_dim = arch["head_dim"];
+    var rope_theta = 1000000.0;
+    if (arch.has("rope_theta")) { rope_theta = arch["rope_theta"]; }
+    var rope_cache = tch.build_rope_cache(
+        tch.arange(0, max_pos, 1, "int64"), head_dim, rope_theta);
+
+    var sess = _torch_native_session(arch_name, weights, arch, rope_cache);
+
+    var self = { architecture: arch, tokenizer: tok, engine: "torch-native" };
+
+    self.run = function (text, opts) {
+        if (opts == null) { opts = {}; }
+        var ids   = tok.encode(text);
+        var newer = _gen.generate(sess, ids, opts, arch);
+        var full  = [];
+        for (var x of ids)   { full.push(x); }
+        for (var y of newer) { full.push(y); }
+        return {
+            "generated_text": tok.decode(full),
+            "new_text":       tok.decode(newer),
+            "input_ids":      ids,
+            "generated_ids":  newer
+        };
+    };
+
+    self.chat = function (messages, opts) {
+        var prompt = _tmpl.apply(arch["chat_template"], messages, true);
+        return self.run(prompt, opts);
+    };
+
+    self.close = function () {
+        tok.close();
+        sess.close();
+    };
+
+    self.চালান       = self.run;
+    self.আলাপ_করুন  = self.chat;
+    self.বন্ধ_করুন   = self.close;
+
+    return self;
+}
+
+function _text_generation_torch(model_dir, pipeline_opts) {
+    if (pipeline_opts == null) { pipeline_opts = {}; }
+
+    var config_path = _resolve(model_dir, pipeline_opts["config"],    "config.json");
+    var tok_path    = _resolve(model_dir, pipeline_opts["tokenizer"], "tokenizer.json");
+    var model_path  = _resolve(model_dir, pipeline_opts["model"],     "model.pt");
+
+    var arch = null;
+    if (pipeline_opts["architecture"] != null) {
+        arch = pipeline_opts["architecture"];
+    } else {
+        var config     = _read_config(config_path);
+        var model_type = config["model_type"];
+        if (model_type == null) { model_type = "qwen2"; }
+        arch = _arch.for_model_type(model_type);
+    }
+    arch = _arch_for_torch(arch);
+
+    var tok = _tok.AutoTokenizer.from_file(tok_path);
+
+    var sess_opts = {};
+    if (pipeline_opts["device"] != null) {
+        sess_opts["device"] = pipeline_opts["device"];
+    } else {
+        sess_opts["device"] = "cpu";
+    }
+    var sess = _torch_session(model_path, sess_opts);
+
+    var self = { architecture: arch, tokenizer: tok, engine: "torch" };
+
+    self.run = function (text, opts) {
+        if (opts == null) { opts = {}; }
+        var ids   = tok.encode(text);
+        var newer = _gen.generate(sess, ids, opts, arch);
+        var full  = [];
+        for (var x of ids)   { full.push(x); }
+        for (var y of newer) { full.push(y); }
+        return {
+            "generated_text": tok.decode(full),
+            "new_text":       tok.decode(newer),
+            "input_ids":      ids,
+            "generated_ids":  newer
+        };
+    };
+
+    self.chat = function (messages, opts) {
+        var prompt = _tmpl.apply(arch["chat_template"], messages, true);
+        return self.run(prompt, opts);
+    };
+
+    self.close = function () {
+        tok.close();
+        sess.close();
+    };
+
+    // ---- Bangla method aliases ----
+    self.চালান       = self.run;
+    self.আলাপ_করুন  = self.chat;
+    self.বন্ধ_করুন   = self.close;
+
+    return self;
+}
+
 function text_generation(model_dir, pipeline_opts) {
     if (pipeline_opts == null) { pipeline_opts = {}; }
 
     // Engine switch — fast-path through onnxruntime-genai when requested.
     if (pipeline_opts["engine"] == "onnxruntime-genai") {
         return _text_generation_genai(model_dir, pipeline_opts);
+    }
+    if (pipeline_opts["engine"] == "torch") {
+        return _text_generation_torch(model_dir, pipeline_opts);
+    }
+    if (pipeline_opts["engine"] == "torch-native") {
+        return _text_generation_torch_native(model_dir, pipeline_opts);
     }
 
     // Resolve paths (override or default).
@@ -99,6 +382,11 @@ function text_generation(model_dir, pipeline_opts) {
         if (not skip.has(k)) { sess_opts[k] = pipeline_opts[k]; }
     }
     var sess = ort.InferenceSession.open(model_path, sess_opts);
+    sess._ops = {
+        "argmax_last":  ort.tensor_argmax_last,
+        "sample_last":  ort.tensor_sample_last,
+        "tensor_close": ort.tensor_close
+    };
 
     var self = { architecture: arch, tokenizer: tok };
 

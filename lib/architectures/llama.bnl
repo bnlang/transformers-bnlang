@@ -1,0 +1,70 @@
+import "torch-bnlang" as tch;
+
+function forward(w, input_ids, position_ids, past_kv, cfg) {
+    var num_layers   = cfg["num_layers"];
+    var num_heads    = cfg["num_heads"];
+    var num_kv_heads = cfg["num_kv_heads"];
+    var head_dim     = cfg["head_dim"];
+    var eps          = cfg["rms_norm_eps"];
+
+    var full_cos = cfg["rope_cache"]["cos"];
+    var full_sin = cfg["rope_cache"]["sin"];
+
+    var seq_len = input_ids["shape"][1];
+    var has_past = (past_kv != null) and (past_kv.length > 0)
+                   and (past_kv[0]["k"] != null);
+    var is_causal = (not has_past) and (seq_len > 1);
+
+    var h = tch.embedding(w["model.embed_tokens.weight"], input_ids);
+
+    var new_kv = [];
+    var i = 0;
+    while (i < num_layers) {
+        var pfx = "model.layers." + str(i) + ".";
+
+        var past_k = null;
+        var past_v = null;
+        if (past_kv != null and i < past_kv.length) {
+            past_k = past_kv[i]["k"];
+            past_v = past_kv[i]["v"];
+        }
+
+        var n1 = tch.rms_norm(h, w[pfx + "input_layernorm.weight"], eps);
+
+        var attn = tch.attention_block(
+            n1,
+            w[pfx + "self_attn.q_proj.weight"], null,
+            w[pfx + "self_attn.k_proj.weight"], null,
+            w[pfx + "self_attn.v_proj.weight"], null,
+            w[pfx + "self_attn.o_proj.weight"],
+            past_k, past_v,
+            full_cos, full_sin, position_ids,
+            num_heads, num_kv_heads, head_dim,
+            is_causal);
+        var x1 = tch.add(h, attn["out"]);
+
+        var n2 = tch.rms_norm(x1, w[pfx + "post_attention_layernorm.weight"], eps);
+        var m  = tch.swiglu_mlp(
+            n2,
+            w[pfx + "mlp.gate_proj.weight"],
+            w[pfx + "mlp.up_proj.weight"],
+            w[pfx + "mlp.down_proj.weight"]);
+        h = tch.add(x1, m);
+
+        new_kv.push({ k: attn["k"], v: attn["v"] });
+        i = i + 1;
+    }
+
+    h = tch.rms_norm(h, w["model.norm.weight"], eps);
+
+    var lm_w = null;
+    if (w.has("lm_head.weight")) {
+        lm_w = w["lm_head.weight"];
+    } else {
+        // Llama-3.2-1B ties; Llama-3-8B and bigger don't (lm_head ships separately).
+        lm_w = w["model.embed_tokens.weight"];
+    }
+    var logits = tch.linear(h, lm_w, null);
+
+    return { logits: logits, past_kv: new_kv };
+}

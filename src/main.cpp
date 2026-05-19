@@ -3,18 +3,10 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 #include <random>
 #include <stdexcept>
 #include <vector>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
-#include <unistd.h>
-#endif
 
 #define TRANSFORMERS_BNLANG_VERSION "0.1.0"
 
@@ -28,52 +20,6 @@ namespace
         (void)ud;
         const char *v = TRANSFORMERS_BNLANG_VERSION;
         return api->make_string(api, v, std::strlen(v));
-    }
-
-    bnl_value *write_fn(const bnl_api *api, int argc, bnl_value **argv, void *ud)
-    {
-        (void)argc;
-        (void)ud;
-        try
-        {
-            std::size_t n = 0;
-            const char *p = api->get_string(argv[0], &n);
-            if (n == 0) return api->make_null(api);
-#ifdef _WIN32
-            HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-            if (h == INVALID_HANDLE_VALUE || h == nullptr)
-                return api->make_null(api);
-            std::fflush(stdout);
-            DWORD written = 0;
-            const char *cur = p;
-            std::size_t left = n;
-            while (left > 0)
-            {
-                DWORD chunk = static_cast<DWORD>(left > (std::size_t)0x7fffffff
-                                                     ? 0x7fffffff
-                                                     : left);
-                if (!WriteFile(h, cur, chunk, &written, nullptr) || written == 0)
-                    break;
-                cur += written;
-                left -= written;
-            }
-#else
-            std::fflush(stdout);
-            ssize_t off = 0;
-            while (static_cast<std::size_t>(off) < n)
-            {
-                ssize_t w = ::write(1, p + off, n - static_cast<std::size_t>(off));
-                if (w <= 0) break;
-                off += w;
-            }
-#endif
-            return api->make_null(api);
-        }
-        catch (const std::exception &e)
-        {
-            api->throw_error(api, e.what());
-            return nullptr;
-        }
     }
 
     bnl_value *argmax_last_fn(const bnl_api *api, int argc, bnl_value **argv, void *ud)
@@ -264,7 +210,6 @@ extern "C" BNL_EXPORT bnl_module *bnl_load(const bnl_api *api)
 
     api->module_add_function(mod, "argmax_last",  2, &argmax_last_fn, nullptr);
     api->module_add_function(mod, "sample_last",  6, &sample_last_fn, nullptr);
-    api->module_add_function(mod, "stdout_write", 1, &write_fn,       nullptr);
 
     transformers::bpe::register_natives(api, mod);
 

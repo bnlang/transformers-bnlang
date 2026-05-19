@@ -35,12 +35,14 @@ function _data_of(tensor) {
     return ort.tensor_to_data(tensor["handle"]);
 }
 
-function _pick_from_handle(logits_tensor, opts) {
+function _pick_from_handle(sess, logits_tensor, opts) {
     var handle = logits_tensor["handle"];
+    var shape = logits_tensor["shape"];
+    var vocab = shape[shape.length - 1];
     var do_sample = opts["do_sample"];
     if (do_sample == null) { do_sample = false; }
     if (not do_sample) {
-        return ort.tensor_argmax_last(handle, VOCAB_SIZE);
+        return sess._ops["argmax_last"](handle, vocab);
     }
     var temperature = opts["temperature"];
     if (temperature == null) { temperature = 1.0; }
@@ -50,7 +52,7 @@ function _pick_from_handle(logits_tensor, opts) {
     if (top_p == null) { top_p = 1.0; }
     var seed = opts["seed"];
     if (seed == null) { seed = 0; }
-    return ort.tensor_sample_last(handle, VOCAB_SIZE, temperature, top_k, top_p, seed);
+    return sess._ops["sample_last"](handle, vocab, temperature, top_k, top_p, seed);
 }
 
 // ---------------------------------------------------------------------
@@ -123,10 +125,10 @@ function _is_eos(id, arch) {
 // ---------------------------------------------------------------------
 // Sampling
 // ---------------------------------------------------------------------
-function _pick_next(logits_tensor, opts) {
+function _pick_next(sess, logits_tensor, opts) {
     // Fast path: logits live in a C++ handle — read raw float* directly.
     if (logits_tensor.has("handle")) {
-        return _pick_from_handle(logits_tensor, opts);
+        return _pick_from_handle(sess, logits_tensor, opts);
     }
 
     // Fallback for already-materialized data (legacy callers).
@@ -148,9 +150,11 @@ function _pick_next(logits_tensor, opts) {
     return native.sample_last(logits, VOCAB_SIZE, temperature, top_k, top_p, seed);
 }
 
-function _close_unused(out) {
+function _close_unused(sess, out) {
     var logits = out["logits"];
-    if (logits.has("handle")) { ort.tensor_close(logits["handle"]); }
+    if (logits.has("handle")) {
+        sess._ops["tensor_close"](logits["handle"]);
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -169,8 +173,8 @@ function generate(sess, prompt_ids, opts, arch) {
 
     var feeds   = _initial_feeds(prompt_ids, arch);
     var out     = sess.run(feeds);
-    var next_id = _pick_next(out["logits"], opts);
-    _close_unused(out);
+    var next_id = _pick_next(sess, out["logits"], opts);
+    _close_unused(sess, out);
     var past_kv = _extract_present(out, arch);
 
     if (_is_eos(next_id, arch)) {
@@ -185,8 +189,8 @@ function generate(sess, prompt_ids, opts, arch) {
         var past_len = n_prompt + step - 1;
         feeds   = _step_feeds(next_id, past_len, past_kv, arch);
         out     = sess.run(feeds);
-        next_id = _pick_next(out["logits"], opts);
-        _close_unused(out);
+        next_id = _pick_next(sess, out["logits"], opts);
+        _close_unused(sess, out);
         past_kv = _extract_present(out, arch);
         if (_is_eos(next_id, arch)) { break; }
         generated.push(next_id);

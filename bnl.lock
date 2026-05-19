@@ -14,6 +14,13 @@
             "integrity": "sha256-6583ef5008b9053d258301368af78da45f9b37cc8382a5cd83eb111ad74054f7",
             "resolved": "https://bpm.bnlang.dev/v1/p/onnxruntime-genai-bnlang/0.1.0/asset/windows-x64",
             "dependencies": {}
+        },
+        "torch-bnlang": {
+            "version": "1.0.0",
+            "kind": "native",
+            "integrity": "sha256-efcd4ba72e3ba6bb15886f256ddf70d12179812629b1a0501e9ca5f54cbaea10",
+            "resolved": "https://bpm.bnlang.dev/v1/p/torch-bnlang/1.0.0/asset/windows-x64",
+            "dependencies": {}
         }
     }
 }
