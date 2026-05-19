@@ -2,16 +2,16 @@
     "version": 1,
     "packages": {
         "onnxruntime-bnlang": {
-            "version": "1.0.0",
+            "version": "1.1.0",
             "kind": "native",
-            "integrity": "sha256-94899443fc31b1077bc5ba7148123027a5afd2580bee29cd6291f1936b0c50bb",
-            "resolved": "https://bpm.bnlang.dev/v1/p/onnxruntime-bnlang/1.0.0/asset/windows-x64",
+            "integrity": "sha256-65dfe464368a6236f22de93711926280d44dbd9c2c5c7fcb5d0e735069233add",
+            "resolved": "https://bpm.bnlang.dev/v1/p/onnxruntime-bnlang/1.1.0/asset/windows-x64",
             "dependencies": {}
         },
         "onnxruntime-genai-bnlang": {
             "version": "0.1.0",
             "kind": "native",
-            "integrity": "sha256-ed8c4dc026b9a141a5733c77f9dad195a2977990587ee05b7c099cbdf3462763",
+            "integrity": "sha256-6583ef5008b9053d258301368af78da45f9b37cc8382a5cd83eb111ad74054f7",
             "resolved": "https://bpm.bnlang.dev/v1/p/onnxruntime-genai-bnlang/0.1.0/asset/windows-x64",
             "dependencies": {}
         }

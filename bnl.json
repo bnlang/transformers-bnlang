@@ -1,12 +1,12 @@
 {
     "name": "transformers-bnlang",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Bnlang transformers — text-generation pipelines on top of onnxruntime-bnlang.",
     "license": "MIT",
     "repository": "https://github.com/bnlang/transformers-bnlang",
     "main": "lib/index.bnl",
     "dependencies": {
-        "onnxruntime-bnlang": "^1.0.0",
+        "onnxruntime-bnlang": "^1.1.0",
         "onnxruntime-genai-bnlang": "^0.1.0"
     },
     "targets": {
