@@ -13,6 +13,9 @@ function from_file(tokenizer_path) {
     self.special_id = function (name) {
         return native.tokenizer_special_id(self.handle, name);
     };
+    self.special_ids = function () {
+        return native.tokenizer_special_ids(self.handle);
+    };
     self.close = function () {
         native.tokenizer_close(self.handle);
         self.handle = -1;

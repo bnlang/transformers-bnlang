@@ -100,7 +100,7 @@ function text_generation(model_dir, pipeline_opts) {
     }
     var sess = ort.InferenceSession.open(model_path, sess_opts);
 
-    var self = { architecture: arch };
+    var self = { architecture: arch, tokenizer: tok };
 
     self.run = function (text, opts) {
         if (opts == null) { opts = {}; }

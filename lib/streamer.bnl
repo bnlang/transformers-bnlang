@@ -1,0 +1,74 @@
+function TextStreamer(tokenizer, opts) {
+    if (opts == null) { opts = {}; }
+
+    var skip_prompt         = opts["skip_prompt"];
+    if (skip_prompt == null) { skip_prompt = false; }
+    var skip_special_tokens = opts["skip_special_tokens"];
+    if (skip_special_tokens == null) { skip_special_tokens = false; }
+    var callback            = opts["callback_function"];
+    if (callback == null) { callback = function (text) { /* no-op */ }; }
+    var on_finalized        = opts["on_finalized_text"];
+
+    // Build a set of special-token ids to filter out, if requested.
+    var special_set = {};
+    if (skip_special_tokens) {
+        var ids = tokenizer.special_ids();
+        for (var s of ids) { special_set[str(s)] = true; }
+    }
+
+    var ids        = [];
+    var prev_text  = "";
+    var prompt_consumed = not skip_prompt;
+    var first_chunk_emitted = false;
+
+    var self = {};
+
+    self.put = function (token_ids) {
+        // First call when skip_prompt is true: swallow the prompt ids.
+        if (not prompt_consumed) {
+            for (var p of token_ids) {
+                if (special_set.has(str(p))) { continue; }
+                ids.push(p);
+            }
+            prev_text = tokenizer.decode(ids);
+            prompt_consumed = true;
+            return;
+        }
+
+        for (var tid of token_ids) {
+            if (skip_special_tokens and special_set.has(str(tid))) { continue; }
+            ids.push(tid);
+        }
+
+        var full = tokenizer.decode(ids);
+        if (full.length <= prev_text.length) { return; }
+
+        var chunk = full.byte_slice(prev_text.length);
+        if (not first_chunk_emitted) {
+            if (chunk.length > 0 and chunk.byte_slice(0, 1) == " ") {
+                chunk = chunk.byte_slice(1);
+            }
+            first_chunk_emitted = true;
+        }
+        prev_text = full;
+        if (chunk.length > 0) { callback(chunk); }
+    };
+
+    self.end = function () {
+        // Final flush — re-decode and emit any remaining suffix.
+        var full = tokenizer.decode(ids);
+        if (full.length > prev_text.length) {
+            var chunk = full.byte_slice(prev_text.length);
+            if (not first_chunk_emitted and chunk.length > 0
+                and chunk.byte_slice(0, 1) == " ") {
+                chunk = chunk.byte_slice(1);
+            }
+            first_chunk_emitted = true;
+            prev_text = full;
+            if (chunk.length > 0) { callback(chunk); }
+        }
+        if (on_finalized != null) { on_finalized(prev_text); }
+    };
+
+    return self;
+}

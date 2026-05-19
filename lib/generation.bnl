@@ -35,6 +35,24 @@ function _data_of(tensor) {
     return ort.tensor_to_data(tensor["handle"]);
 }
 
+function _pick_from_handle(logits_tensor, opts) {
+    var handle = logits_tensor["handle"];
+    var do_sample = opts["do_sample"];
+    if (do_sample == null) { do_sample = false; }
+    if (not do_sample) {
+        return ort.tensor_argmax_last(handle, VOCAB_SIZE);
+    }
+    var temperature = opts["temperature"];
+    if (temperature == null) { temperature = 1.0; }
+    var top_k = opts["top_k"];
+    if (top_k == null) { top_k = 0; }
+    var top_p = opts["top_p"];
+    if (top_p == null) { top_p = 1.0; }
+    var seed = opts["seed"];
+    if (seed == null) { seed = 0; }
+    return ort.tensor_sample_last(handle, VOCAB_SIZE, temperature, top_k, top_p, seed);
+}
+
 // ---------------------------------------------------------------------
 // Feeds
 // ---------------------------------------------------------------------
@@ -106,6 +124,12 @@ function _is_eos(id, arch) {
 // Sampling
 // ---------------------------------------------------------------------
 function _pick_next(logits_tensor, opts) {
+    // Fast path: logits live in a C++ handle — read raw float* directly.
+    if (logits_tensor.has("handle")) {
+        return _pick_from_handle(logits_tensor, opts);
+    }
+
+    // Fallback for already-materialized data (legacy callers).
     var logits = _data_of(logits_tensor);
 
     var do_sample = opts["do_sample"];
@@ -136,9 +160,12 @@ function _close_unused(out) {
 function generate(sess, prompt_ids, opts, arch) {
     var max_new = opts["max_new_tokens"];
     if (max_new == null) { max_new = 32; }
+    var streamer = opts["streamer"];
 
     var generated = [];
     var n_prompt  = prompt_ids.length;
+
+    if (streamer != null) { streamer.put(prompt_ids); }
 
     var feeds   = _initial_feeds(prompt_ids, arch);
     var out     = sess.run(feeds);
@@ -146,8 +173,12 @@ function generate(sess, prompt_ids, opts, arch) {
     _close_unused(out);
     var past_kv = _extract_present(out, arch);
 
-    if (_is_eos(next_id, arch)) { return generated; }
+    if (_is_eos(next_id, arch)) {
+        if (streamer != null) { streamer.end(); }
+        return generated;
+    }
     generated.push(next_id);
+    if (streamer != null) { streamer.put([next_id]); }
 
     var step = 1;
     while (step < max_new) {
@@ -159,7 +190,9 @@ function generate(sess, prompt_ids, opts, arch) {
         past_kv = _extract_present(out, arch);
         if (_is_eos(next_id, arch)) { break; }
         generated.push(next_id);
+        if (streamer != null) { streamer.put([next_id]); }
         step = step + 1;
     }
+    if (streamer != null) { streamer.end(); }
     return generated;
 }

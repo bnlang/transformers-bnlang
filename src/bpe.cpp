@@ -719,6 +719,35 @@ namespace transformers::bpe
             }
         }
 
+        bnl_value *tokenizer_special_ids_fn(const bnl_api *api, int argc, bnl_value **argv, void *ud)
+        {
+            (void)argc;
+            (void)ud;
+            try
+            {
+                int id = static_cast<int>(api->get_number(argv[0]));
+
+                Tokenizer *tok = nullptr;
+                {
+                    auto &t = table();
+                    std::lock_guard<std::mutex> lk(t.mu);
+                    auto it = t.toks.find(id);
+                    if (it == t.toks.end())
+                        throw std::runtime_error("invalid tokenizer handle");
+                    tok = it->second.get();
+                }
+                bnl_value *list = api->make_list(api);
+                for (int sid : tok->special_ids)
+                    api->list_push(list, api->make_number(api, static_cast<double>(sid)));
+                return list;
+            }
+            catch (const std::exception &e)
+            {
+                api->throw_error(api, e.what());
+                return nullptr;
+            }
+        }
+
     } // namespace
 
     void register_natives(const bnl_api *api, bnl_module *mod)
@@ -729,6 +758,7 @@ namespace transformers::bpe
         api->module_add_function(mod, "tokenizer_encode", 2, &tokenizer_encode_fn, nullptr);
         api->module_add_function(mod, "tokenizer_decode", 2, &tokenizer_decode_fn, nullptr);
         api->module_add_function(mod, "tokenizer_special_id", 2, &tokenizer_special_id_fn, nullptr);
+        api->module_add_function(mod, "tokenizer_special_ids", 1, &tokenizer_special_ids_fn, nullptr);
     }
 
 } // namespace transformers::bpe
