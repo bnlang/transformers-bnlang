@@ -8,7 +8,7 @@
     "dependencies": {
         "onnxruntime-bnlang": "^1.1.0",
         "onnxruntime-genai-bnlang": "^0.1.0",
-        "torch-bnlang": "^1.0.0"
+        "torch-bnlang": "^1.1.0"
     },
     "targets": {
         "darwin-arm64": "build/darwin-arm64/transformers-bnlang.dylib",

@@ -16,10 +16,10 @@
             "dependencies": {}
         },
         "torch-bnlang": {
-            "version": "1.0.0",
+            "version": "1.1.0",
             "kind": "native",
-            "integrity": "sha256-efcd4ba72e3ba6bb15886f256ddf70d12179812629b1a0501e9ca5f54cbaea10",
-            "resolved": "https://bpm.bnlang.dev/v1/p/torch-bnlang/1.0.0/asset/windows-x64",
+            "integrity": "sha256-0b56d3674dc63adf172db66fdf86d68926f3b3fcbce42a61150264fe0e427213",
+            "resolved": "https://bpm.bnlang.dev/v1/p/torch-bnlang/1.1.0/asset/windows-x64",
             "dependencies": {}
         }
     }
