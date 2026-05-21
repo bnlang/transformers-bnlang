@@ -1,13 +1,17 @@
 {
     "name": "transformers-bnlang",
-    "version": "0.3.1",
+    "version": "0.4.0",
     "description": "Bnlang transformers — text-generation pipelines across four engines: onnxruntime (.onnx), onnxruntime-genai, torch (TorchScript .pt), and torch-native (.safetensors direct).",
     "license": "MIT",
     "repository": "https://github.com/bnlang/transformers-bnlang",
     "main": "lib/index.bnl",
     "dependencies": {
         "onnxruntime-bnlang": "^1.1.0",
-        "onnxruntime-genai-bnlang": "^0.1.0",
+        "onnxruntime-genai-bnlang": {
+            "version": "^0.1.0",
+            "platforms": ["windows-x64", "darwin-arm64", "darwin-x64"],
+            "optional": true
+        },
         "torch-bnlang": "^1.1.0"
     },
     "targets": {

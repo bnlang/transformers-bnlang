@@ -1,6 +1,4 @@
 import "transformers-bnlang" as native;
-import "onnxruntime-bnlang"  as ort;
-
 var VOCAB_SIZE = 151936;
 
 // ---------------------------------------------------------------------
@@ -32,6 +30,7 @@ function _range(n) {
 
 function _data_of(tensor) {
     if (tensor.has("data")) { return tensor["data"]; }
+    import "onnxruntime-bnlang" as ort;
     return ort.tensor_to_data(tensor["handle"]);
 }
 

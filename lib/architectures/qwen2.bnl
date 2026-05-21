@@ -1,5 +1,3 @@
-import "torch-bnlang" as tch;
-
 var DEFAULT_CFG = {
     "num_layers":    24,
     "num_heads":     14,
@@ -22,6 +20,7 @@ function _merge_cfg(cfg) {
 }
 
 function forward(w, input_ids, position_ids, past_kv, cfg) {
+    import "torch-bnlang" as tch;
     cfg = _merge_cfg(cfg);
 
     var num_layers   = cfg["num_layers"];

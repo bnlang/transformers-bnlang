@@ -1,6 +1,5 @@
-import "torch-bnlang" as tch;
-
 function forward(w, input_ids, position_ids, past_kv, cfg) {
+    import "torch-bnlang" as tch;
     var num_layers   = cfg["num_layers"];
     var num_heads    = cfg["num_heads"];
     var num_kv_heads = cfg["num_kv_heads"];

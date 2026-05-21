@@ -1,6 +1,3 @@
-import "onnxruntime-bnlang"       as ort;
-import "onnxruntime-genai-bnlang" as ortg;
-import "torch-bnlang"              as tch;
 import "io"                       as io;
 import "json"                     as json;
 import "path"                     as path;
@@ -32,6 +29,7 @@ function _read_config(config_path) {
 }
 
 function _text_generation_genai(model_dir, pipeline_opts) {
+    import "onnxruntime-genai-bnlang" as ortg;
     if (pipeline_opts == null) { pipeline_opts = {}; }
 
     if (not io.exists(model_dir + "/genai_config.json")) {
@@ -70,6 +68,7 @@ function _text_generation_genai(model_dir, pipeline_opts) {
 }
 
 function _torch_session(pt_path, sess_opts) {
+    import "torch-bnlang" as tch;
     var mod = tch.JitModule.open(pt_path, sess_opts);
     var self = {};
     self.run = function (feeds) {
@@ -130,6 +129,7 @@ function _arch_from_config(arch, cfg) {
 }
 
 function _torch_native_session(arch_name, weights, arch, rope_cache, max_pos) {
+    import "torch-bnlang" as tch;
     var num_layers = arch["num_layers"];
     var self = {};
     self.run = function (feeds) {
@@ -217,6 +217,7 @@ function _torch_native_session(arch_name, weights, arch, rope_cache, max_pos) {
 }
 
 function _load_safetensors_sharded(model_dir, index_path) {
+    import "torch-bnlang" as tch;
     var index = json.parse(io.read_file(index_path));
     var weight_map = index["weight_map"];
 
@@ -237,6 +238,7 @@ function _load_safetensors_sharded(model_dir, index_path) {
 }
 
 function _load_torch_native_weights(model_dir, override) {
+    import "torch-bnlang" as tch;
     if (override != null) {
         var p = _resolve(model_dir, override, "model.safetensors");
         return tch.load_safetensors(p);
@@ -256,6 +258,7 @@ function _load_torch_native_weights(model_dir, override) {
 }
 
 function _text_generation_torch_native(model_dir, pipeline_opts) {
+    import "torch-bnlang" as tch;
     if (pipeline_opts == null) { pipeline_opts = {}; }
 
     var config_path = _resolve(model_dir, pipeline_opts["config"],    "config.json");
@@ -337,6 +340,7 @@ function _text_generation_torch_native(model_dir, pipeline_opts) {
 }
 
 function _text_generation_torch(model_dir, pipeline_opts) {
+    import "torch-bnlang" as tch;
     if (pipeline_opts == null) { pipeline_opts = {}; }
 
     var config_path = _resolve(model_dir, pipeline_opts["config"],    "config.json");
@@ -412,6 +416,7 @@ function text_generation(model_dir, pipeline_opts) {
     if (pipeline_opts["engine"] == "torch-native") {
         return _text_generation_torch_native(model_dir, pipeline_opts);
     }
+    import "onnxruntime-bnlang" as ort;
 
     // Resolve paths (override or default).
     var config_path = _resolve(model_dir, pipeline_opts["config"],    "config.json");
