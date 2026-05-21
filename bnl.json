@@ -9,7 +9,11 @@
         "onnxruntime-bnlang": "^1.1.0",
         "onnxruntime-genai-bnlang": {
             "version": "^0.1.0",
-            "platforms": ["windows-x64", "darwin-arm64", "darwin-x64"],
+            "platforms": [
+                "windows-x64",
+                "darwin-arm64",
+                "darwin-x64"
+            ],
             "optional": true
         },
         "torch-bnlang": "^1.1.0"
